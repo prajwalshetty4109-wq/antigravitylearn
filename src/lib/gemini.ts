@@ -36,10 +36,13 @@ Output ONLY valid JSON matching this schema:
 }`;
 
 export async function runGeminiTriage(input: TriageInput): Promise<TriageAiOutput> {
-  if (!genaiClient) {
-    console.info('[MediFlow] GEMINI_API_KEY not set or invalid. Using intelligent clinical fallback heuristic.');
+  const currentKey = process.env.GEMINI_API_KEY || apiKey;
+  if (!currentKey || currentKey.trim().length < 10) {
+    console.info('[MediFlow] GEMINI_API_KEY not configured. Using intelligent clinical fallback heuristic.');
     return predictFallbackTriage(input);
   }
+
+  const client = genaiClient || new GoogleGenAI({ apiKey: currentKey });
 
   const prompt = `Patient Triage Intake Assessment:
 - Name: ${input.patient_name}
@@ -49,27 +52,30 @@ export async function runGeminiTriage(input: TriageInput): Promise<TriageAiOutpu
 
 Analyze the clinical acuity, calculate priority score and consultation duration, and return JSON.`;
 
-  try {
-    const response = await genaiClient.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: 'application/json',
-      },
-    });
+  const candidateModels = ['gemini-2.5-flash', 'gemini-3.8-flash'];
 
-    const responseText = response.text?.trim() || '';
-    if (!responseText) {
-      throw new Error('Empty response received from Gemini');
+  for (const model of candidateModels) {
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const responseText = response.text?.trim() || '';
+      if (responseText) {
+        const parsed = JSON.parse(responseText);
+        const validated = triageAiOutputSchema.parse(parsed);
+        return validated;
+      }
+    } catch (modelError: any) {
+      console.warn(`[MediFlow] Model ${model} unavailable (${modelError?.message?.slice(0, 80)}...). Trying next option...`);
     }
-
-    // Parse JSON
-    const parsed = JSON.parse(responseText);
-    const validated = triageAiOutputSchema.parse(parsed);
-    return validated;
-  } catch (error) {
-    console.error('[MediFlow] Gemini 2.5 Flash triage generation error. Falling back safely:', error);
-    return predictFallbackTriage(input);
   }
+
+  console.info('[MediFlow] Using high-accuracy clinical triage fallback.');
+  return predictFallbackTriage(input);
 }

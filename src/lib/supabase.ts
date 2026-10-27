@@ -1,21 +1,27 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://wnyyjswrwfhoosrovdfm.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const isSupabaseConfigured: boolean = Boolean(
   supabaseUrl &&
-    supabaseAnonKey &&
+    (supabaseAnonKey || supabaseServiceKey) &&
     supabaseUrl.startsWith('https://') &&
-    !supabaseUrl.includes('placeholder') &&
-    supabaseAnonKey.length > 20
+    !supabaseUrl.includes('placeholder')
 );
 
-let client: SupabaseClient | null = null;
+// Client-side / public client
+let publicClient: SupabaseClient | null = null;
 
-if (isSupabaseConfigured) {
+export function getSupabaseClient(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || supabaseUrl;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || supabaseAnonKey;
+
+  if (!url || !key) return null;
+
   try {
-    client = createClient(supabaseUrl!, supabaseAnonKey!, {
+    return createClient(url, key, {
       auth: {
         persistSession: false,
       },
@@ -26,9 +32,13 @@ if (isSupabaseConfigured) {
       },
     });
   } catch (error) {
-    console.warn('[MediFlow] Supabase initialization failed, falling back to local memory store.', error);
-    client = null;
+    console.warn('[MediFlow] Supabase initialization failed:', error);
+    return null;
   }
 }
 
-export const supabase = client;
+if (isSupabaseConfigured) {
+  publicClient = getSupabaseClient();
+}
+
+export const supabase = publicClient;
